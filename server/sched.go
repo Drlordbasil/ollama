@@ -44,8 +44,8 @@ type Scheduler struct {
 }
 
 // TODO set this to zero after a release or two, to enable multiple models by default
-var loadedMax = 1          // Maximum runners; < 1 maps to as many as will fit in VRAM (unlimited for CPU runners)
-var maxQueuedRequests = 10 // TODO configurable
+var loadedMax = 1 // Maximum runners; < 1 maps to as many as will fit in VRAM (unlimited for CPU runners)
+var maxQueuedRequests = 10
 var numParallel = 1
 
 func InitScheduler(ctx context.Context) *Scheduler {
@@ -82,6 +82,8 @@ func InitScheduler(ctx context.Context) *Scheduler {
 
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration time.Duration) (chan *runnerRef, chan error) {
+	opts.NumCtx = opts.NumCtx * numParallel
+
 	req := &LlmRequest{
 		ctx:             c,
 		model:           model,
@@ -90,13 +92,10 @@ func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options,
 		successCh:       make(chan *runnerRef),
 		errCh:           make(chan error, 1),
 	}
-	// context split across parallel threads
-	opts.NumCtx = opts.NumCtx * numParallel
-	select {
-	case s.pendingReqCh <- req:
-	default:
-		req.errCh <- fmt.Errorf("server busy, please try again.  maximum pending requests exceeded")
-	}
+
+	// queue the request
+	s.pendingReqCh <- req
+
 	return req.successCh, req.errCh
 }
 
@@ -136,7 +135,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 				} else if loadedMax > 0 && loadedCount >= loadedMax {
 					slog.Debug("max runners achieved, unloading one to make room", "runner_count", loadedCount)
-					runnerToExpire = s.findRunnerToUnload(pending)
+					runnerToExpire = s.findRunnerToUnload()
 				} else {
 					// Either no models are loaded or below loadedMax
 					// Get a refreshed GPU list
@@ -177,11 +176,11 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						s.loadFn(pending, ggml, gpus)
 						break
 					}
-					runnerToExpire = s.findRunnerToUnload(pending)
+					runnerToExpire = s.findRunnerToUnload()
 				}
 
 				if runnerToExpire == nil {
-					// Shouildn't happen
+					// Shouldn't happen
 					slog.Error("runner to expire was nil!")
 					continue
 				}
@@ -342,7 +341,7 @@ func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList) 
 
 	go func() {
 		defer runner.refMu.Unlock()
-		if err = llama.WaitUntilRunning(req.ctx); err != nil {
+		if err = llama.WaitUntilReady(req.ctx); err != nil {
 			slog.Error("error loading llama server", "error", err)
 			runner.refCount--
 			req.errCh <- err
@@ -524,7 +523,7 @@ func pickBestFitGPUs(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList) gpu.
 }
 
 // findRunnerToUnload finds a runner to unload to make room for a new model
-func (s *Scheduler) findRunnerToUnload(req *LlmRequest) *runnerRef {
+func (s *Scheduler) findRunnerToUnload() *runnerRef {
 	s.loadedMu.Lock()
 	runnerList := make([]*runnerRef, 0, len(s.loaded))
 	for _, r := range s.loaded {

@@ -335,10 +335,8 @@ func TestGetRunner(t *testing.T) {
 	// Same model, same request
 	scenario1a := newScenario(t, ctx, "ollama-model-1a", 10)
 	scenario1a.req.sessionDuration = 0
-	scenario1b := newScenario(t, ctx, "ollama-model-1b", 10)
+	scenario1b := newScenario(t, ctx, "ollama-model-1c", 10)
 	scenario1b.req.sessionDuration = 0
-	scenario1c := newScenario(t, ctx, "ollama-model-1c", 10)
-	scenario1c.req.sessionDuration = 0
 	maxQueuedRequests = 1
 	s := InitScheduler(ctx)
 	s.getGpuFn = func() gpu.GpuInfoList {
@@ -351,13 +349,6 @@ func TestGetRunner(t *testing.T) {
 	slog.Info("scenario1a")
 	successCh1a, errCh1a := s.GetRunner(scenario1a.ctx, scenario1a.req.model, scenario1a.req.opts, scenario1a.req.sessionDuration)
 	require.Len(t, s.pendingReqCh, 1)
-	slog.Info("scenario1b")
-	successCh1b, errCh1b := s.GetRunner(scenario1b.ctx, scenario1b.req.model, scenario1b.req.opts, scenario1b.req.sessionDuration)
-	require.Len(t, s.pendingReqCh, 1)
-	require.Len(t, successCh1b, 0)
-	require.Len(t, errCh1b, 1)
-	err := <-errCh1b
-	require.Contains(t, err.Error(), "server busy")
 	s.Run(ctx)
 	select {
 	case resp := <-successCh1a:
@@ -372,9 +363,9 @@ func TestGetRunner(t *testing.T) {
 	require.Len(t, s.loaded, 1)
 	s.loadedMu.Unlock()
 
-	scenario1c.req.model.ModelPath = "bad path"
+	scenario1b.req.model.ModelPath = "bad path"
 	slog.Info("scenario1c")
-	successCh1c, errCh1c := s.GetRunner(scenario1c.ctx, scenario1c.req.model, scenario1c.req.opts, scenario1c.req.sessionDuration)
+	successCh1c, errCh1c := s.GetRunner(scenario1b.ctx, scenario1b.req.model, scenario1b.req.opts, scenario1b.req.sessionDuration)
 	require.Len(t, s.pendingReqCh, 0)
 	require.Len(t, successCh1c, 0)
 	require.Len(t, errCh1c, 0)
@@ -384,7 +375,7 @@ func TestGetRunner(t *testing.T) {
 	require.Len(t, s.loaded, 0)
 	s.loadedMu.Unlock()
 	require.Len(t, errCh1c, 1)
-	err = <-errCh1c
+	err := <-errCh1c
 	require.Contains(t, err.Error(), "bad path")
 	scenario1b.ctxDone()
 }
@@ -496,10 +487,6 @@ func TestUpdateFreeSpace(t *testing.T) {
 func TestFindRunnerToUnload(t *testing.T) {
 	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer done()
-	req := &LlmRequest{
-		ctx:  ctx,
-		opts: api.DefaultOptions(),
-	}
 	r1 := &runnerRef{refCount: 1, sessionDuration: 1}
 	r2 := &runnerRef{sessionDuration: 2}
 
@@ -509,10 +496,10 @@ func TestFindRunnerToUnload(t *testing.T) {
 	s.loaded["b"] = r2
 	s.loadedMu.Unlock()
 
-	resp := s.findRunnerToUnload(req)
+	resp := s.findRunnerToUnload()
 	require.Equal(t, r2, resp)
 	r2.refCount = 1
-	resp = s.findRunnerToUnload(req)
+	resp = s.findRunnerToUnload()
 	require.Equal(t, r1, resp)
 
 }
@@ -608,8 +595,8 @@ type mockLlm struct {
 	estimatedVRAM     uint64
 }
 
-func (s *mockLlm) Ping(ctx context.Context) error             { return s.pingResp }
-func (s *mockLlm) WaitUntilRunning(ctx context.Context) error { return s.waitResp }
+func (s *mockLlm) Ping(ctx context.Context) error           { return s.pingResp }
+func (s *mockLlm) WaitUntilReady(ctx context.Context) error { return s.waitResp }
 func (s *mockLlm) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	return s.completionResp
 }

@@ -30,7 +30,7 @@ import (
 
 type LlamaServer interface {
 	Ping(ctx context.Context) error
-	WaitUntilRunning(ctx context.Context) error
+	WaitUntilReady(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
 	Embedding(ctx context.Context, prompt string) ([]float64, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
@@ -338,7 +338,7 @@ type ServerStatus int
 
 const ( // iota is reset to 0
 	ServerStatusReady ServerStatus = iota
-	ServerStatusNoSlotsAvaialble
+	ServerStatusNoSlotsAvailable
 	ServerStatusLoadingModel
 	ServerStatusNotResponding
 	ServerStatusError
@@ -348,7 +348,7 @@ func (s ServerStatus) ToString() string {
 	switch s {
 	case ServerStatusReady:
 		return "llm server ready"
-	case ServerStatusNoSlotsAvaialble:
+	case ServerStatusNoSlotsAvailable:
 		return "llm busy - no slots available"
 	case ServerStatusLoadingModel:
 		return "llm server loading model"
@@ -405,7 +405,7 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 	case "ok":
 		return ServerStatusReady, nil
 	case "no slot available":
-		return ServerStatusNoSlotsAvaialble, nil
+		return ServerStatusNoSlotsAvailable, nil
 	case "loading model":
 		return ServerStatusLoadingModel, nil
 	default:
@@ -422,14 +422,14 @@ func (s *llmServer) Ping(ctx context.Context) error {
 	return nil
 }
 
-func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
+func (s *llmServer) WaitUntilReady(ctx context.Context) error {
 	start := time.Now()
 	// TODO we need to wire up a better way to detect hangs during model load and startup of the server
 	expiresAt := time.Now().Add(10 * time.Minute) // be generous with timeout, large models can take a while to load
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
-	slog.Info("waiting for llama runner to start responding")
+	slog.Info("waiting for llama runner to be ready")
 	var lastStatus ServerStatus = -1
 	for {
 		select {
@@ -585,12 +585,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"cache_prompt":      true,
 	}
 
-	// Make sure the server is ready
-	status, err := s.getServerStatus(ctx)
-	if err != nil {
-		return err
-	} else if status != ServerStatusReady {
-		return fmt.Errorf("unexpected server status: %s", status.ToString())
+	if err := s.WaitUntilReady(ctx); err != nil {
+		return fmt.Errorf("llama server not ready: %w", err)
 	}
 
 	if req.Format == "json" {
@@ -796,11 +792,8 @@ type TokenizeResponse struct {
 
 func (s *llmServer) Tokenize(ctx context.Context, content string) ([]int, error) {
 	// Make sure the server is ready
-	status, err := s.getServerStatus(ctx)
-	if err != nil {
-		return nil, err
-	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvaialble {
-		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
+	if err := s.WaitUntilReady(ctx); err != nil {
+		return nil, fmt.Errorf("llama server not ready: %w", err)
 	}
 
 	data, err := json.Marshal(TokenizeRequest{Content: content})
@@ -848,11 +841,8 @@ type DetokenizeResponse struct {
 
 func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error) {
 	// Make sure the server is ready
-	status, err := s.getServerStatus(ctx)
-	if err != nil {
-		return "", err
-	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvaialble {
-		return "", fmt.Errorf("unexpected server status: %s", status.ToString())
+	if err := s.WaitUntilReady(ctx); err != nil {
+		return "", fmt.Errorf("llama server not ready: %w", err)
 	}
 
 	data, err := json.Marshal(DetokenizeRequest{Tokens: tokens})
