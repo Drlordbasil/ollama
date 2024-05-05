@@ -429,7 +429,6 @@ func (s *llmServer) WaitUntilReady(ctx context.Context) error {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
-	slog.Info("waiting for llama runner to be ready")
 	var lastStatus ServerStatus = -1
 	for {
 		select {
@@ -585,6 +584,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"cache_prompt":      true,
 	}
 
+	slog.Info("waiting for llama runner to be ready")
 	if err := s.WaitUntilReady(ctx); err != nil {
 		return fmt.Errorf("llama server not ready: %w", err)
 	}
