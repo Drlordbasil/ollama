@@ -82,8 +82,6 @@ func InitScheduler(ctx context.Context) *Scheduler {
 
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration time.Duration) (chan *runnerRef, chan error) {
-	opts.NumCtx = opts.NumCtx * numParallel
-
 	req := &LlmRequest{
 		ctx:             c,
 		model:           model,
@@ -92,10 +90,13 @@ func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options,
 		successCh:       make(chan *runnerRef),
 		errCh:           make(chan error, 1),
 	}
-
-	// queue the request
-	s.pendingReqCh <- req
-
+	// context split across parallel threads
+	opts.NumCtx = opts.NumCtx * numParallel
+	select {
+	case s.pendingReqCh <- req:
+	default:
+		req.errCh <- fmt.Errorf("server busy, please try again.  maximum pending requests exceeded")
+	}
 	return req.successCh, req.errCh
 }
 
