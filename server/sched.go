@@ -44,8 +44,8 @@ type Scheduler struct {
 }
 
 // TODO set this to zero after a release or two, to enable multiple models by default
-var loadedMax = 1 // Maximum runners; < 1 maps to as many as will fit in VRAM (unlimited for CPU runners)
-var maxQueuedRequests = 10
+var loadedMax = 1          // Maximum runners; < 1 maps to as many as will fit in VRAM (unlimited for CPU runners)
+var maxQueuedRequests = 10 // TODO configurable
 var numParallel = 1
 
 func InitScheduler(ctx context.Context) *Scheduler {
